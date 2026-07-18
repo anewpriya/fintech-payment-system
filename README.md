@@ -332,35 +332,6 @@ INFO - Kafka producer connected
 ├── requirements.txt # Python dependencies
 └── README.md # This file
 
-## Next Steps (Future Implementation)
-
-This is Phase 1 (API Gateway + Database). Future phases:
-
-**Phase 2: Fraud Detection Service**
-
-- Consume from `transactions` Kafka topic
-- Tier 1: Rule-based fraud checks
-- Tier 2: LightGBM ML model
-- Publish to `fraud-scores` topic
-
-**Phase 3: Settlement & Reconciliation**
-
-- Consume from `fraud-scores` topic
-- Process approved transactions
-- Reconcile with bank records daily
-
-**Phase 4: Feature Store (Flink)**
-
-- Consume from `transactions` topic
-- Compute velocity features (rolling windows)
-- Write to Redis for real-time serving
-
-**Phase 5: Monitoring & Observability**
-
-- Prometheus metrics collection
-- Grafana dashboards
-- PagerDuty alerting
-
 ## References
 
 ### Architecture Patterns
