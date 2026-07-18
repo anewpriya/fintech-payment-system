@@ -1,0 +1,166 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement
+  namespace: fintech
+  labels:
+    app: settlement
+    component: settlement
+
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: settlement
+
+  template:
+    metadata:
+      labels:
+        app: settlement
+        component: settlement
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+      - name: settlement
+        image: fintech/settlement:latest
+        imagePullPolicy: Always
+
+        # Command to run settlement consumer
+        command:
+        - python
+        - -m
+        - src.run_settlement_consumer
+
+        # Environment variables
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: fintech-secrets
+              key: database-url
+        - name: KAFKA_BROKERS
+          value: "kafka-cluster:9092"
+        - name: KAFKA_CONSUMER_GROUP
+          value: "fintech-settlement"
+        - name: REDIS_URL
+          value: "redis://redis-cluster:6379/0"
+        - name: DEBUG
+          value: "false"
+
+        # Resource limits
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+
+        # Liveness probe (check database connection)
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - |
+              from src.database import engine
+              with engine.connect() as conn:
+                conn.execute("SELECT 1")
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Security
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /var/log
+
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+
+      # Restart policy
+      restartPolicy: Always
+
+      # Pod disruption budget
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - settlement
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: autoscaling.k8s.io/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: settlement-hpa
+  namespace: fintech
+
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: settlement
+
+  minReplicas: 2
+  maxReplicas: 6
+
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 75
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 10
+        periodSeconds: 60

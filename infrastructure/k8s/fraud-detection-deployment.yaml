@@ -1,0 +1,163 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-detection
+  namespace: fintech
+  labels:
+    app: fraud-detection
+    component: fraud
+
+spec:
+  replicas: 2  # Start with 2 instances
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: fraud-detection
+
+  template:
+    metadata:
+      labels:
+        app: fraud-detection
+        component: fraud
+
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+      - name: fraud-detection
+        image: fintech/fraud-detection:latest
+        imagePullPolicy: Always
+
+        # Command to run fraud consumer
+        command:
+        - python
+        - -m
+        - src.run_fraud_consumer
+
+        # Environment variables
+        env:
+        - name: KAFKA_BROKERS
+          value: "kafka-cluster:9092"
+        - name: KAFKA_CONSUMER_GROUP
+          value: "fintech-fraud-detection"
+        - name: REDIS_URL
+          value: "redis://redis-cluster:6379/0"
+        - name: FRAUD_THRESHOLD
+          value: "75"
+        - name: DEBUG
+          value: "false"
+
+        # Resource limits
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+
+        # Liveness probe (check if process is running)
+        livenessProbe:
+          exec:
+            command:
+            - python
+            - -c
+            - |
+              import redis
+              r = redis.from_url('redis://redis-cluster:6379/0')
+              r.ping()
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Security
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /var/log
+
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+
+      # Restart policy
+      restartPolicy: Always
+
+      # Pod disruption budget
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - fraud-detection
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: autoscaling.k8s.io/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fraud-detection-hpa
+  namespace: fintech
+
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fraud-detection
+
+  minReplicas: 2
+  maxReplicas: 8
+
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 75
+
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 20
+        periodSeconds: 60
