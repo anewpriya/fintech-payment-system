@@ -17,6 +17,8 @@ This system processes payments with multi-tier fraud detection, real-time settle
 
 ## Architecture
 
+![Fintech Payment System Architecture](Fintech.jpg)
+
 ### Local Development Architecture
 
 For local development, the system runs with docker-compose providing PostgreSQL, Kafka, Redis, and Zookeeper.
