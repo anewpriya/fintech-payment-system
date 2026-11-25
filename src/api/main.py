@@ -5,10 +5,12 @@ This module defines the API Gateway that receives transactions,
 validates them, and publishes to Kafka for processing.
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, Header, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
+from decimal import Decimal
 from typing import Optional
 import uuid
 from datetime import datetime
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 # Initialize FastAPI app
 app = FastAPI(
     title="Fintech Payment System",
-    description="Production-grade payment processing with real-time fraud detection",
+    description="Synthetic payment processing prototype",
     version="0.1.0",
 )
 
@@ -53,11 +55,11 @@ class TransactionRequest(BaseModel):
     user_email: str = Field(..., description="User email address")
     user_country: str = Field(..., min_length=2, max_length=2, description="ISO country code")
     
-    amount: float = Field(..., gt=0, description="Transaction amount")
+    amount: Decimal = Field(..., gt=0, max_digits=19, decimal_places=2, description="Transaction amount")
     currency: str = Field(default="USD", min_length=3, max_length=3, description="ISO currency code")
     description: Optional[str] = Field(None, description="Transaction description")
     
-    card_last_four: str = Field(..., min_length=4, max_length=4, description="Last 4 digits of card")
+    card_last_four: str = Field(..., pattern=r"^[0-9]{4}$", description="Last 4 digits of card")
     card_brand: str = Field(..., description="Card brand (VISA, MASTERCARD, AMEX)")
     card_hash: str = Field(..., description="SHA256 hash of full card number")
     
@@ -164,6 +166,19 @@ async def health_check():
     }
 
 
+def replay_transaction(existing, request):
+    fields = request.model_dump()
+    if any(getattr(existing, key) != value for key, value in fields.items()):
+        raise HTTPException(status_code=409, detail="Idempotency key reused with different payload")
+    return TransactionResponse(
+        transaction_id=str(existing.transaction_id),
+        idempotency_key=str(existing.idempotency_key),
+        status=existing.status,
+        message="Existing transaction; no new submission",
+        timestamp=existing.created_at.isoformat(),
+    )
+
+
 # ============================================================================
 # Transaction Endpoints
 # ============================================================================
@@ -178,6 +193,7 @@ async def health_check():
 async def create_transaction(
     request: TransactionRequest,
     db: Session = Depends(get_db),
+    idempotency_key: uuid.UUID = Header(..., alias="Idempotency-Key"),
 ):
     """
     Create a new transaction.
@@ -205,7 +221,9 @@ async def create_transaction(
     try:
         # Generate IDs
         transaction_id = uuid.uuid4()
-        idempotency_key = uuid.uuid4()
+        existing = db.query(Transaction).filter_by(idempotency_key=idempotency_key).first()
+        if existing:
+            return replay_transaction(existing, request)
         
         logger.info(f"Processing transaction {transaction_id} for user {request.user_id}")
         
@@ -232,7 +250,14 @@ async def create_transaction(
         
         # Save to database
         db.add(transaction)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            existing = db.query(Transaction).filter_by(idempotency_key=idempotency_key).first()
+            if existing:
+                return replay_transaction(existing, request)
+            raise
         db.refresh(transaction)
         logger.info(f"✓ Transaction {transaction_id} saved to database")
         
@@ -274,6 +299,9 @@ async def create_transaction(
             timestamp=datetime.utcnow().isoformat(),
         )
     
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         logger.error(f"✗ Error processing transaction: {e}")
         db.rollback()
@@ -289,7 +317,7 @@ async def create_transaction(
     description="Retrieve the current status of a transaction",
 )
 async def get_transaction(
-    transaction_id: str,
+    transaction_id: uuid.UUID,
     db: Session = Depends(get_db),
 ):
     """

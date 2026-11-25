@@ -5,7 +5,7 @@ This module handles all communication with Kafka, ensuring messages
 are published reliably and with proper partitioning.
 """
 
-from kafka import KafkaProducer
+from kafka import KafkaProducer as KafkaClientProducer
 import json
 import logging
 from typing import Dict, Any, Optional
@@ -43,7 +43,7 @@ class KafkaProducer:
         - value_serializer: Serialize Python dicts to JSON
         """
         try:
-            self.producer = KafkaProducer(
+            self.producer = KafkaClientProducer(
                 bootstrap_servers=self.brokers,
                 acks='all',  # Wait for all replicas (most reliable)
                 retries=3,

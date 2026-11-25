@@ -91,7 +91,7 @@ class TestTransactionFlow:
         }
         
         fraud_result = fraud_service.detect_fraud(
-            transaction_data={
+            transaction={
                 'transaction_id': str(transaction_id),
                 'user_id': 12345,
                 'amount': 100.00,
@@ -153,7 +153,7 @@ class TestTransactionFlow:
         }
         
         fraud_result = fraud_service.detect_fraud(
-            transaction_data={
+            transaction={
                 'transaction_id': str(transaction_id),
                 'user_id': 99999,
                 'amount': 5000.00,
@@ -218,9 +218,11 @@ class TestTransactionFlow:
         balance_after_first = user_account.balance
         assert balance_after_first == Decimal("450.00")
         
-        # Try to settle again (should not double-charge due to idempotency)
-        # Note: In production, this would be prevented by unique constraint
-        # on idempotency_key. Here we just verify once settled, can't settle again.
+        result2 = settlement_service.settle_transaction(str(transaction_id), 'APPROVE')
+        assert result2['settlement_id'] == result1['settlement_id']
+        db.refresh(user_account)
+        assert user_account.balance == balance_after_first
+        assert db.query(Settlement).filter_by(transaction_id=transaction_id).count() == 1
         
         db.refresh(transaction)
         assert transaction.status == 'APPROVED'
