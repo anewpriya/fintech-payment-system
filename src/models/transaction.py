@@ -45,7 +45,7 @@ class Transaction(Base):
     currency = Column(String(3), nullable=False, default="USD")
     description = Column(String(500))
     
-    # Card Details (HASHED for PCI-DSS)
+    # Synthetic card identifiers only
     card_last_four = Column(String(4), nullable=False)
     card_brand = Column(String(20), nullable=False)  # VISA, MASTERCARD, AMEX
     card_hash = Column(String(64), nullable=False)   # SHA256 of full card number
@@ -66,10 +66,10 @@ class Transaction(Base):
     
     # Indexes for common queries
     __table_args__ = (
-        Index('idx_user_created', 'user_id', 'created_at'),
-        Index('idx_merchant_created', 'merchant_id', 'created_at'),
+        Index('idx_transaction_user_created', 'user_id', 'created_at'),
+        Index('idx_transaction_merchant_created', 'merchant_id', 'created_at'),
         Index('idx_fraud_score', 'fraud_score'),
-        Index('idx_status', 'status'),
+        Index('idx_transaction_status', 'status'),
     )
     
     def __repr__(self):
@@ -112,9 +112,9 @@ class Settlement(Base):
     bank_reference_id = Column(String(255))
     
     __table_args__ = (
-        Index('idx_user_created', 'user_id', 'created_at'),
-        Index('idx_merchant_created', 'merchant_id', 'created_at'),
-        Index('idx_status', 'status'),
+        Index('idx_settlement_user_created', 'user_id', 'created_at'),
+        Index('idx_settlement_merchant_created', 'merchant_id', 'created_at'),
+        Index('idx_settlement_status', 'status'),
     )
     
     def __repr__(self):
@@ -125,8 +125,7 @@ class UserAccount(Base):
     """
     Represents a user's account balance.
     
-    Uses optimistic locking (version field) to prevent race conditions
-    without database locks.
+    Settlement uses database row locks; version is a revision counter.
     """
     
     __tablename__ = "user_accounts"
@@ -150,10 +149,9 @@ class UserAccount(Base):
 
 class AuditLog(Base):
     """
-    Immutable audit trail for compliance (PCI-DSS requirement).
+    Application audit records; immutability is not enforced.
     
-    Every change to transactions/settlements/accounts is logged here.
-    Can never be deleted, only marked as superseded.
+    Selected settlement changes are recorded.
     """
     
     __tablename__ = "audit_logs"

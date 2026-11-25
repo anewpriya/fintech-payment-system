@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # API Configuration
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    debug: bool = True
+    debug: bool = False
     
     # Fraud Detection
     fraud_threshold: int = 75  # Score above this = decline
